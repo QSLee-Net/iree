@@ -9,6 +9,7 @@
 #include "iree/compiler/Codegen/Common/GPU/GPUHeuristics.h"
 #include "iree/compiler/Codegen/Common/TileInferenceUtils.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/GPULoweringConfigUtils.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUAttrs.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUEnums.h"
@@ -16,6 +17,7 @@
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUOps.h"
 #include "iree/compiler/Codegen/Interfaces/PartitionableLoopsInterface.h"
 #include "iree/compiler/Codegen/Utils/Utils.h"
+#include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtOps.h"
 #include "iree/compiler/Dialect/LinalgExt/Utils/Utils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
@@ -44,7 +46,7 @@ constexpr int64_t kPreferredCopyNumBits = 128;
 LogicalResult setDataTiledMultiMmaLoweringConfig(
     IREE::GPU::TargetAttr target, mlir::FunctionOpInterface entryPoint,
     Operation *op, IREE::GPU::UKernelConfigAttr ukernelConfig) {
-  auto multiMmaOp = dyn_cast<IREE::GPU::MultiMmaOp>(op);
+  auto multiMmaOp = dyn_cast<IREE::Codegen::InnerTiledOp>(op);
   if (!multiMmaOp) {
     return failure();
   }
@@ -67,7 +69,7 @@ LogicalResult setDataTiledMultiMmaLoweringConfig(
 
   // Set all workgroup and reduction tile sizes to 1, since the data tiled
   // kernel has the scope of an entire workgroup, and the reduction tiling is
-  // already baked into the "opaque" data tiled inner layout of the multi_mma.
+  // already baked into the "opaque" data tiled inner layout of the inner_tiled.
   SmallVector<AffineMap> indexingMaps = multiMmaOp.getIndexingMapsArray();
   mlir::linalg::ContractionDimensions contractionDims =
       mlir::linalg::inferContractionDims(indexingMaps).value();
@@ -130,8 +132,8 @@ static std::optional<GPUMMASchedule> getMmaScheduleFromProblemAndTarget(
   const int64_t targetSubgroupSize = target.getPreferredSubgroupSize();
   SmallVector<GPUMatmulShapeType> intrinsics;
   for (IREE::GPU::MMAAttr mma : target.getWgp().getMma()) {
-    // Intrinsics that do not specify a scope cannot be distributed.
-    if (failed(mma.getMmaScope()))
+    // Intrinsics that do not specify a distribution kind cannot be distributed.
+    if (!mma.getDistributionMappingKind())
       continue;
     if (mma.getSubgroupSize() != targetSubgroupSize)
       continue;
@@ -584,6 +586,19 @@ struct DistributionInfo {
 
 static FailureOr<DistributionInfo> collectOpDistributionInfo(Operation *op) {
   DistributionInfo distInfo;
+  // MapScatterOp doesn't fit the LinalgOp interface, so use special case logic
+  // to get the distribution info.
+  if (auto mapScatterOp = dyn_cast<IREE::LinalgExt::MapScatterOp>(op)) {
+    distInfo.partitionableLoops =
+        llvm::to_vector(llvm::seq<unsigned int>(mapScatterOp.getInputRank()));
+    distInfo.vectorizable = false;
+    distInfo.minBitwidth = mapScatterOp.getInputType().getElementTypeBitWidth();
+    distInfo.representativeBitWidth = distInfo.minBitwidth;
+    distInfo.loopBounds =
+        SmallVector<int64_t>(mapScatterOp.getInputType().getShape());
+    return distInfo;
+  }
+
   // PackOp doesn't fit the LinalgOp interface, since it is a RelayoutOp, so
   // we have to use special case logic to get the distribution info.
   if (auto packOp = dyn_cast<linalg::PackOp>(op)) {

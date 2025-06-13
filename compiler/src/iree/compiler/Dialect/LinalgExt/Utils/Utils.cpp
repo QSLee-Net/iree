@@ -430,13 +430,6 @@ getIGEMMGenericConvDetails(linalg::LinalgOp linalgOp) {
     return failure();
   }
 
-  // TODO: Support dilation.
-  if (!hasAllOneValues(convDims.dilations)) {
-    LDBG("[unimplemented] expected no dilations (expected dilations to all be "
-         "one).");
-    return failure();
-  }
-
   // TODO: Support pooling operations. For pooling ops, the input/output channel
   // size will be categorized as the additional batch dimension.
   if (convDims.outputChannel.empty() || convDims.inputChannel.empty()) {
@@ -891,6 +884,15 @@ bool isArgmaxOp(linalg::GenericOp genericOp) {
     if (!matchPattern(producer, m_Op<arith::SelectOp>())) {
       return false;
     }
+    auto selectOp = cast<arith::SelectOp>(producerOutput.getDefiningOp());
+    Value trueVal = selectOp.getTrueValue();
+    if (auto castOp = trueVal.getDefiningOp<arith::IndexCastOp>())
+      trueVal = castOp.getIn();
+
+    // Ensure the true value is directly produced by linalg.index.
+    auto indexOp = trueVal.getDefiningOp<linalg::IndexOp>();
+    if (!indexOp)
+      return false;
   }
 
   // Producer of arith.select op is arith.cmpf

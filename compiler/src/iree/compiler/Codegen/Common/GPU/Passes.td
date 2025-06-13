@@ -187,9 +187,10 @@ def GPUMultiBufferingPass :
 
 def GPUPackToIntrinsicsPass :
     InterfacePass<"iree-codegen-gpu-pack-to-intrinsics", "mlir::FunctionOpInterface"> {
-  let summary = "Packs matmul like operations and converts to iree_gpu.multi_mma";
+  let summary = "Packs matmul like operations and converts to iree_codegen.inner_tiled";
   let dependentDialects = [
     "::mlir::tensor::TensorDialect",
+    "::mlir::iree_compiler::IREE::Codegen::IREECodegenDialect",
     "::mlir::iree_compiler::IREE::GPU::IREEGPUDialect"
   ];
 }
@@ -374,10 +375,14 @@ def ReorderWorkgroupsPass :
 def VectorReductionToGPUPass :
     InterfacePass<"iree-codegen-vector-reduction-to-gpu", "mlir::FunctionOpInterface"> {
   let summary = "Convert vector reduction to GPU ops.";
-  let constructor = "mlir::iree_compiler::createConvertVectorReductionToGPUPass()";
   let dependentDialects = [
     "::mlir::affine::AffineDialect", "::mlir::gpu::GPUDialect",
     "::mlir::memref::MemRefDialect", "::mlir::scf::SCFDialect",
+  ];
+  let options = [
+    Option<"expandSubgroupReduction", "expand-subgroup-reduction", "bool",
+           /*default=*/"true",
+           "Lower subgroup reductions to gpu ops immediately where possible.">,
   ];
 }
 

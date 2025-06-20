@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/InterleavedRange.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Utils.h"
@@ -904,6 +905,106 @@ LogicalResult TopkOp::verify() {
 LogicalResult
 TopkOp::reifyResultShapes(OpBuilder &b,
                           ReifiedRankedShapedTypeDims &reifiedReturnShapes) {
+  return cast<LinalgExtOp>(getOperation())
+      .reifyResultShapes(b, reifiedReturnShapes);
+}
+
+//===----------------------------------------------------------------------===//
+// ArgmaxOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ArgCompareOp::verify() {
+  Operation *op = getOperation();
+
+  unsigned numInputVals = llvm::size(getInputs());
+  if (numInputVals != 1) {
+    return op->emitOpError(
+               "expected exactly one tensor input operand, but got ")
+           << numInputVals;
+  }
+
+  unsigned numOutputs = getNumDpsInits();
+  if (numOutputs != 2) {
+    return op->emitOpError(
+               "expected two output operands (value and index), but got ")
+           << numOutputs;
+  }
+
+  uint64_t dim = getDimension();
+  int64_t rank = getInputRank();
+  if (dim >= rank) {
+    return op->emitOpError("reduction dimension exceeds or equals input rank. ")
+           << "got dimension: " << dim << ", but input rank is: " << rank;
+  }
+
+  ShapedType inputType = getInputType();
+  auto outputValueType = getOutputValueType();
+  auto outputIndexType = getOutputIndexType();
+
+  if (inputType.getElementType() != outputValueType.getElementType()) {
+    return op->emitOpError("input and output value element types must match. ")
+           << "Input type: " << inputType.getElementType()
+           << ", output value type: " << outputValueType.getElementType();
+  }
+
+  if (failed(verifyCompatibleShape(outputValueType, outputIndexType))) {
+    return op->emitOpError("output indices/values shape must match. ")
+           << "Output value shape: "
+           << llvm::interleaved_array(outputValueType.getShape())
+           << ", output index shape: "
+           << llvm::interleaved_array(outputIndexType.getShape());
+  }
+
+  SmallVector<int64_t> expectedShape;
+  for (int64_t i = 0; i < rank; ++i) {
+    if (i != dim)
+      expectedShape.push_back(inputType.getDimSize(i));
+  }
+  if (!llvm::equal(expectedShape, outputValueType.getShape())) {
+    return op->emitOpError("output shape must match input shape with reduction "
+                           "dimension removed. ")
+           << "Expected: " << llvm::interleaved_array(expectedShape)
+           << ", but got: "
+           << llvm::interleaved_array(outputValueType.getShape());
+  }
+
+  Region &region = getRegion();
+  Block &block = region.front();
+  unsigned numArgs = block.getNumArguments();
+  if (numArgs != 2) {
+    return op->emitOpError("region block should have 2 arguments, but got ")
+           << numArgs;
+  }
+  Type inputElemType = inputType.getElementType();
+  Type arg0Type = block.getArgument(0).getType();
+  Type arg1Type = block.getArgument(1).getType();
+
+  if (arg0Type != inputElemType || arg1Type != inputElemType) {
+    return op->emitOpError(
+               "comparator region arguments must match input element type. ")
+           << "Expected: " << inputElemType << ", but got: " << arg0Type
+           << " and " << arg1Type;
+  }
+
+  auto yieldOp = cast<IREE::LinalgExt::YieldOp>(block.getTerminator());
+  unsigned numOperands = yieldOp->getNumOperands();
+  if (numOperands != 1) {
+    return op->emitOpError(
+               "expected linalg_ext.yield to return 1 operand, but got ")
+           << numOperands;
+  }
+
+  Type yieldType = yieldOp.getOperand(0).getType();
+  if (!yieldType.isInteger(1)) {
+    return op->emitOpError(
+               "region block must end with a linalg_ext.yield i1, but got: ")
+           << yieldType;
+  }
+  return success();
+}
+
+LogicalResult ArgCompareOp::reifyResultShapes(
+    OpBuilder &b, ReifiedRankedShapedTypeDims &reifiedReturnShapes) {
   return cast<LinalgExtOp>(getOperation())
       .reifyResultShapes(b, reifiedReturnShapes);
 }
@@ -2332,6 +2433,7 @@ DEFINE_OP_GET_EFFECTS(SortOp)
 DEFINE_OP_GET_EFFECTS(FftOp)
 DEFINE_OP_GET_EFFECTS(ScanOp)
 DEFINE_OP_GET_EFFECTS(TopkOp)
+DEFINE_OP_GET_EFFECTS(ArgCompareOp)
 DEFINE_OP_GET_EFFECTS(PackOp)
 DEFINE_OP_GET_EFFECTS(UnPackOp)
 DEFINE_OP_GET_EFFECTS(WinogradInputTransformOp)

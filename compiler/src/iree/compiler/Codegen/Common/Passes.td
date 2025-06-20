@@ -349,6 +349,19 @@ def ExtractAddressComputationPass : Pass<"iree-codegen-extract-address-computati
   ];
 }
 
+def FissionTransferOpsInControlFlowPass : InterfacePass<"iree-codegen-fission-transfer-ops-in-control-flow", "mlir::FunctionOpInterface"> {
+  let summary =
+      "Fission transfer read and write ops in control flow to allow prefetching.";
+  let dependentDialects = [
+      "memref::MemRefDialect"
+  ];
+  let options = [
+    Option<"FissionMultiTrip", "fission-multi-trip",
+           "bool", /*default=*/"false",
+           "Allow fission in presence of loops with greater than one trip count.">
+  ];
+}
+
 def FlattenMemRefSubspanPass : Pass<"iree-codegen-flatten-memref-subspan", "ModuleOp"> {
   let summary =
       "Flatten n-D MemRef subspan ops to 1-D ones and fold byte offsets";
@@ -364,6 +377,11 @@ def FoldAffineMinInDistributedLoopsPass :
   let summary = "Fold `affine.min` ops in distributed loops";
 }
 
+def FoldReshapeIntoInterfaceTensorPass :
+    Pass<"iree-codegen-fold-reshape-into-interface-tensor", ""> {
+  let summary = "Folds reshape operations into the interface bindings.";
+}
+
 def FoldTensorExtractOpPass :
   Pass<"iree-codegen-fold-tensor-extract-op", ""> {
   let summary = "Fold `tensor.extract` operations prior to lowering to LLVM";
@@ -372,6 +390,15 @@ def FoldTensorExtractOpPass :
     tensor_loads introduced for use only in tensor_extract. These can be
     folded to use a load of the created memref object that holds the constant
     values.
+  }];
+}
+
+def ForallToForPass :
+  InterfacePass<"iree-codegen-forall-to-for", "mlir::FunctionOpInterface"> {
+  let summary = "Convert scf.forall to nested scf.for loops";
+  let description = [{
+    Converts scf.forall operations (without workgroup mapping) to nested
+    scf.for loops.
   }];
 }
 
@@ -412,6 +439,9 @@ def GenericVectorizationPass :
     Option<"maxVectorSize", "max-vector-size", "int64_t",
             /*default=*/"2147483647",
            "Max vector size allowed to avoid creating large vectors.">
+  ];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect"
   ];
 }
 
@@ -629,6 +659,10 @@ def PadDynamicAllocPass :
 def MathTransformPass :
     Pass<"iree-codegen-math-transform", ""> {
   let summary = "Apply math ops transformations: approximations, rewrites to other math ops, operand casts.";
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::arith::ArithDialect"
+  ];
 }
 
 def PropagateDispatchSizeBoundsPass :

@@ -26,6 +26,22 @@ public:
   void notifyOperationReplaced(Operation *op, ValueRange replacement) override;
 };
 
+/// Fold a tensor::ExpandShapeOp into a consumer `mapScatterOp`, by linearizing
+/// and then delinearizing the source indices of the `mapScatterOp`s index
+/// transformation.
+IREE::LinalgExt::MapScatterOp
+foldExpandShapeIntoMapScatter(RewriterBase &rewriter,
+                              tensor::ExpandShapeOp expandShapeOp,
+                              IREE::LinalgExt::MapScatterOp mapScatterOp);
+
+/// Fold a tensor::CollapseShapeOp into a consumer `mapScatterOp`, by
+/// linearizing and then delinearizing the source indices of the
+/// `mapScatterOp`s index transformation.
+IREE::LinalgExt::MapScatterOp
+foldCollapseShapeIntoMapScatter(RewriterBase &rewriter,
+                                tensor::CollapseShapeOp collapseShapeOp,
+                                IREE::LinalgExt::MapScatterOp mapScatterOp);
+
 using IGEMMConfigFn =
     std::function<LogicalResult(linalg::GenericOp, IREE::LinalgExt::Im2colOp)>;
 using IGEMMControlFn = std::function<bool(Operation *)>;
@@ -77,6 +93,14 @@ FailureOr<IREETilingResult>
 tileDispatchUsingSCFForOp(RewriterBase &rewriter, TilingInterface op,
                           linalg::LinalgTilingOptions options);
 
+/// Populate patterns that fold tensor.expand/collapse_shape into the memref
+/// of iree_codegen.load_from_buffer or iree_codegen.store_to_buffer ops.
+void populateFoldTensorReshapeIntoBufferPatterns(RewritePatternSet &patterns);
+
+/// Populate patterns that fold tensor.expand/collapse_shape into the source
+/// hal.interface.binding.subspan.
+void populateReshapeToInterfaceTensorPatterns(RewritePatternSet &patterns);
+
 /// Populate patterns related to clean up the IR after tile and distribute
 /// to workgroups.
 void populateTileAndDistributeToWorkgroupsCleanupPatterns(
@@ -93,6 +117,9 @@ void populateIREEResolveExtractStridedMetadataPatterns(
 void populateReplaceSlowMinMaxOpsPatterns(RewritePatternSet &patterns);
 
 void populateSwapExtractWithExpandPattern(RewritePatternSet &patterns);
+
+/// Populate patterns to fold relayout operations into map_scatter ops.
+void populateCombineRelayoutOpPatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::iree_compiler
 

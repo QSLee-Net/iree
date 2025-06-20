@@ -202,7 +202,6 @@ static void addMemRefLoweringPasses(OpPassManager &modulePassManager) {
       // to handle subview ops.
       .addPass(memref::createFoldMemRefAliasOpsPass)
       .addPass(createEmulateNarrowTypePass)
-      .addPass(memref::createExpandOpsPass)
       .addPass(createCanonicalizerPass)
       .addPass(createCSEPass)
 
@@ -615,8 +614,9 @@ void addSPIRVSubgroupReducePassPipeline(OpPassManager &funcPassManager) {
   funcPassManager.addPass(createCanonicalizerPass());
 
   // Handle vector reduction operations specifically.
-  funcPassManager.addPass(createConvertVectorReductionToGPUPass(
-      /*expandSubgroupReduction=*/false));
+  VectorReductionToGPUPassOptions options;
+  options.expandSubgroupReduction = false;
+  funcPassManager.addPass(createVectorReductionToGPUPass(options));
   // Perform normal vector unrolling and lowering transformations. This breaks
   // vectors down to native machine size.
   addSPIRVVectorLoweringPasses(funcPassManager);

@@ -17,17 +17,6 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
 
-/// TODO: Iterator type arrays are duplicated across dialects upstream and here.
-/// These should be unified somewhere as a common iterator type array attr.
-def IREEGPU_IteratorTypeEnum
-    : EnumAttr<IREEGPU_Dialect, IteratorType, "iterator_type"> {
-    let assemblyFormat = "`<` $value `>`";
-}
-
-def IREEGPU_IteratorTypeArrayAttr
-    : TypedArrayAttrBase<IREEGPU_IteratorTypeEnum,
-                         "Iterator type should be an enum.">;
-
 //===----------------------------------------------------------------------===//
 // GPU Specific Lowering Config Attributes
 //===----------------------------------------------------------------------===//
@@ -65,7 +54,8 @@ def IREEGPU_DerivedThreadConfig :
         "getStaticTilingLevelSizes",
         "getTilingLevelSizes",
         "hasTilingLevel",
-      ]>
+      ]>,
+      DeclareAttrInterfaceMethods<IREEGPU_PromotionAttr>
     ]> {
   let mnemonic = "derived_thread_config";
   let summary = [{
@@ -88,7 +78,8 @@ def IREEGPU_UseGlobalLoadDma :
         "getStaticTilingLevelSizes",
         "getTilingLevelSizes",
         "hasTilingLevel",
-      ]>
+      ]>,
+      DeclareAttrInterfaceMethods<IREEGPU_PromotionAttr>
     ]> {
   let mnemonic = "use_global_load_dma";
   let summary = [{
@@ -101,6 +92,41 @@ def IREEGPU_UseGlobalLoadDma :
   }];
   let assemblyFormat = "";
   let parameters = (ins);
+}
+
+def IREEGPU_PromoteWithCacheSwizzle :
+    AttrDef<IREEGPU_Dialect, "PromoteWithCacheSwizzle", [
+      DeclareAttrInterfaceMethods<IREEGPU_PromotionAttr, [
+        "promoteOperand",
+      ]>
+    ]> {
+  let mnemonic = "promote_with_cache_swizzle";
+  let summary = [{
+    Indicate promotion of an operand with setting a cache swizzle value.
+  }];
+  let description = [{
+    When promoting, this will create a `linalg.copy` on the input operand,
+    and then the primary producing dispatch input has a buffer cast with cache
+    swizzle inserted if possible. For example,
+
+    ```
+    %0 = tensor_ext.dispatch.tensor.load : tensor<?x8192>
+    %1 = linalg.matmul ins(%0, ...)
+    ```
+
+    Becomes with `#iree_gpu.promote_with_cache_swizzle<#iree_gpu.derived_thread_config>`
+
+    ```
+    %0 = tensor_ext.dispatch.tensor.load : tensor<?x8192>
+    %1 = iree_gpu.buffer_resource_cast cache_swizzle(8192)
+    %2 = linalg.copy lowering_config = #iree_gpu.derived_thread_config
+    %3 = linalg.matmul ins(%2, ...)
+    ```
+  }];
+  let assemblyFormat = "`<` $copy_config `>`";
+  let parameters = (ins
+    "Attribute":$copy_config
+  );
 }
 
 //===----------------------------------------------------------------------===//
@@ -148,13 +174,18 @@ def IREEGPU_MMAIntrinsicAttr
 
 def IREEGPU_MMAAttr : AttrDef<IREEGPU_Dialect, "MMA", [
   DeclareAttrInterfaceMethods<IREEGPU_MmaInterfaceAttr, [
-    "getABCElementTypes",
-    "getABCVectorTypes",
-    "getMNKShape",
     "getSubgroupSize",
-    "getMmaScope",
-    "buildMmaOperation",
+  ]>,
+  DeclareAttrInterfaceMethods<IREECodegen_InnerTileDescAttrInterface, [
+    "getExpectedNumInputs",
+    "getExpectedNumOutputs",
+    "verifyIndexingMaps",
+    "getUndistributedTileTypes",
+    "getDistributedTileTypes",
     "populateOperandOffsetsSizesStrides",
+    "getDistributionMappingKind",
+    "getDistributionWorkerCount",
+    "buildUnderlyingOperations",
   ]>
 ]> {
   let mnemonic = "mma_layout";
@@ -202,13 +233,18 @@ def IREEGPU_MMAAttr : AttrDef<IREEGPU_Dialect, "MMA", [
 def IREEGPU_DataTiledMMAAttr :
     AttrDef<IREEGPU_Dialect, "DataTiledMMA", [
   DeclareAttrInterfaceMethods<IREEGPU_MmaInterfaceAttr, [
-    "getABCElementTypes",
-    "getABCVectorTypes",
-    "getMNKShape",
     "getSubgroupSize",
-    "getMmaScope",
+  ]>,
+  DeclareAttrInterfaceMethods<IREECodegen_InnerTileDescAttrInterface, [
+    "getExpectedNumInputs",
+    "getExpectedNumOutputs",
+    "verifyIndexingMaps",
+    "getUndistributedTileTypes",
+    "getDistributedTileTypes",
     "populateOperandOffsetsSizesStrides",
-    "buildMmaOperation",
+    "getDistributionMappingKind",
+    "getDistributionWorkerCount",
+    "buildUnderlyingOperations",
   ]>
 ]> {
   let mnemonic = "data_tiled_mma_layout";
@@ -244,13 +280,18 @@ def IREEGPU_VirtualMMAIntrinsicAttr
 def IREEGPU_VirtualMMAAttr :
     AttrDef<IREEGPU_Dialect, "VirtualMMA", [
   DeclareAttrInterfaceMethods<IREEGPU_MmaInterfaceAttr, [
-    "getABCElementTypes",
-    "getABCVectorTypes",
-    "getMNKShape",
     "getSubgroupSize",
-    "getMmaScope",
+  ]>,
+  DeclareAttrInterfaceMethods<IREECodegen_InnerTileDescAttrInterface, [
+    "getExpectedNumInputs",
+    "getExpectedNumOutputs",
+    "verifyIndexingMaps",
+    "getUndistributedTileTypes",
+    "getDistributedTileTypes",
     "populateOperandOffsetsSizesStrides",
-    "buildMmaOperation",
+    "getDistributionMappingKind",
+    "getDistributionWorkerCount",
+    "buildUnderlyingOperations",
   ]>
 ]> {
   let mnemonic = "virtual_mma_layout";

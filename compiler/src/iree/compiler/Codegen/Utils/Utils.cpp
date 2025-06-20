@@ -287,6 +287,11 @@ bool isRISCV32(Attribute attr) {
   return triple && triple.value().isRISCV32();
 }
 
+bool isRISCV64(Attribute attr) {
+  std::optional<llvm::Triple> triple = getTargetTriple(attr);
+  return triple && triple.value().isRISCV64();
+}
+
 bool isReadOnly(Value v) {
   Operation *definingOp = v.getDefiningOp();
   if (!definingOp)
@@ -1901,6 +1906,32 @@ std::optional<int64_t> getConstantIndex(Value value) {
     return std::nullopt;
 
   return val.getSExtValue();
+}
+
+bool alwaysRunsFirstIteration(scf::ForOp op) {
+  // Can't perform the analysis if the loops's bounds aren't index-typed.
+  if (!op.getInductionVar().getType().isIndex())
+    return false;
+  FailureOr<bool> isLb = ValueBoundsConstraintSet::compare(
+      getAsOpFoldResult(op.getLowerBound()), ValueBoundsConstraintSet::LT,
+      getAsOpFoldResult(op.getUpperBound()));
+  return isLb.value_or(false);
+}
+
+bool neverRunsSecondIteration(scf::ForOp op) {
+  // Can't perform the analysis if the loops's bounds aren't index-typed.
+  if (!op.getInductionVar().getType().isIndex())
+    return false;
+  // If the upper bound (ub) is less than or equal to the loop step, then
+  // lower bound  + step must be greater than the upper bound, assuming the
+  // lower bound is non-negative.
+  FailureOr<bool> isUbUnderStep = ValueBoundsConstraintSet::compare(
+      getAsOpFoldResult(op.getUpperBound()), ValueBoundsConstraintSet::LE,
+      getAsOpFoldResult(op.getStep()));
+  FailureOr<bool> isLbNonNegative = ValueBoundsConstraintSet::compare(
+      getAsOpFoldResult(op.getLowerBound()), ValueBoundsConstraintSet::GE,
+      getAsIndexOpFoldResult(op.getContext(), 0));
+  return isUbUnderStep.value_or(false) && isLbNonNegative.value_or(false);
 }
 
 } // namespace mlir::iree_compiler

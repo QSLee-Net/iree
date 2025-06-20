@@ -187,9 +187,10 @@ def GPUMultiBufferingPass :
 
 def GPUPackToIntrinsicsPass :
     InterfacePass<"iree-codegen-gpu-pack-to-intrinsics", "mlir::FunctionOpInterface"> {
-  let summary = "Packs matmul like operations and converts to iree_gpu.multi_mma";
+  let summary = "Packs matmul like operations and converts to iree_codegen.inner_tiled";
   let dependentDialects = [
     "::mlir::tensor::TensorDialect",
+    "::mlir::iree_compiler::IREE::Codegen::IREECodegenDialect",
     "::mlir::iree_compiler::IREE::GPU::IREEGPUDialect"
   ];
 }
@@ -228,8 +229,17 @@ def GPUPipeliningPass :
 def GPUPromoteMatmulOperandsPass :
     InterfacePass<"iree-codegen-gpu-promote-matmul-operands",
                   "mlir::FunctionOpInterface"> {
-  let summary = "Pass to insert copies with a different thread configuration "
+  let summary = "Pass to insert copies with a different lowering configuration "
                 "on matmul operands";
+  let description = [{
+    Looks for all matmuls annotated with `promote_operands = I64Array` and
+    inserts copies on the specified operands with a thread lowering config
+    optimized for coalesced loads.
+
+    If the matmul is also annotated with `promotion_types = ArrayAttr`, the
+    logic for "promoting" an operand is deferred to an attribute interface
+    allowing for custom logic.
+  }];
   let dependentDialects = [
     "::mlir::bufferization::BufferizationDialect",
     "::mlir::gpu::GPUDialect",
@@ -320,6 +330,23 @@ def GPUApplyTilingLevelPass :
   ];
 }
 
+def GPUApplyPaddingLevelPass :
+    InterfacePass<"iree-codegen-gpu-apply-padding-level", "mlir::FunctionOpInterface"> {
+  let summary = "Pass to pad based on tiling configs";
+  let dependentDialects = ["::mlir::tensor::TensorDialect"];
+  let options = [
+    Option<"tilingLevel", "tiling-level", "IREE::GPU::TilingLevel",
+           /*default=*/"IREE::GPU::TilingLevel::Reduction",
+           "Tiling level to tile. Supported levels are 'reduction' and 'thread'",
+           [{llvm::cl::values(
+              clEnumValN(IREE::GPU::TilingLevel::Reduction, "reduction",
+                         "Tile and fuse all annotated ops to serial loops"),
+              clEnumValN(IREE::GPU::TilingLevel::PartialReduction, "partial_reduction",
+                         "Tile and fuse all annotated ops to partial reduuction loops")
+           )}]>
+  ];
+}
+
 def GPUTensorTileToSerialLoopsPass :
     InterfacePass<"iree-codegen-gpu-tensor-tile-to-serial-loops", "mlir::FunctionOpInterface"> {
   let summary = "Pass to tile reduction dimensions for certain GPU ops";
@@ -374,10 +401,14 @@ def ReorderWorkgroupsPass :
 def VectorReductionToGPUPass :
     InterfacePass<"iree-codegen-vector-reduction-to-gpu", "mlir::FunctionOpInterface"> {
   let summary = "Convert vector reduction to GPU ops.";
-  let constructor = "mlir::iree_compiler::createConvertVectorReductionToGPUPass()";
   let dependentDialects = [
     "::mlir::affine::AffineDialect", "::mlir::gpu::GPUDialect",
     "::mlir::memref::MemRefDialect", "::mlir::scf::SCFDialect",
+  ];
+  let options = [
+    Option<"expandSubgroupReduction", "expand-subgroup-reduction", "bool",
+           /*default=*/"true",
+           "Lower subgroup reductions to gpu ops immediately where possible.">,
   ];
 }
 
